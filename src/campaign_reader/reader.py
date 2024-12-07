@@ -29,6 +29,7 @@ class CampaignReader:
         self._validate_zip_file()
         
         # Set up extraction directory
+        self._using_temp_dir = extract_dir is None
         self._extract_dir = Path(extract_dir) if extract_dir else Path(tempfile.mkdtemp())
         self._extracted_files: Dict[str, Path] = {}
         
@@ -117,18 +118,34 @@ class CampaignReader:
         """Remove all extracted files and directories."""
         if self._extract_dir.exists():
             try:
+                # If directory is readonly, try to make it writable first
+                current_mode = self._extract_dir.stat().st_mode
+                if not os.access(self._extract_dir, os.W_OK):
+                    os.chmod(self._extract_dir, current_mode | 0o700)
+
+                # Remove files
                 for file_path in self._extracted_files.values():
                     if file_path.exists():
-                        file_path.unlink()
-                        
-                # Remove any empty directories
-                for dir_path in sorted(self._extract_dir.rglob('*'), reverse=True):
-                    if dir_path.is_dir():
-                        dir_path.rmdir()
-                        
-                # Remove extraction directory if it was temporary
-                if not self._extract_dir.samefile(Path(tempfile.gettempdir())):
-                    self._extract_dir.rmdir()
+                        file_path.unlink(missing_ok=True)
+                
+                # Remove empty directories, but only if we created the temp dir
+                if self._using_temp_dir:
+                    for dir_path in sorted(self._extract_dir.rglob('*'), reverse=True):
+                        if dir_path.is_dir():
+                            try:
+                                dir_path.rmdir()
+                            except OSError:
+                                pass  # Directory might not be empty or might be readonly
+                    
+                    # Remove the temp directory itself
+                    try:
+                        self._extract_dir.rmdir()
+                    except OSError:
+                        pass  # Directory might not be empty or might be readonly
+
+                # Restore original permissions if we changed them
+                if not os.access(self._extract_dir, os.W_OK):
+                    os.chmod(self._extract_dir, current_mode)
                     
             except Exception as e:
                 logger.error(f"Error during cleanup: {str(e)}")
