@@ -1,7 +1,11 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pathlib import Path
+
+from campaign_reader.analytics import AnalyticsData
+from campaign_reader.video import VideoMetadata
+
 
 @dataclass
 class CampaignSegment:
@@ -35,6 +39,30 @@ class CampaignSegment:
         if self._extracted_path:
             return self._extracted_path / 'analytics'
         return None
+
+    def get_analytics_files(self) -> List[Path]:
+        """Get all analytics files for this segment in order."""
+        if not self._extracted_path:
+            return []
+
+        analytics_path = self.get_analytics_path()
+        if not analytics_path or not analytics_path.exists():
+            return []
+
+        return sorted(analytics_path.glob('analytics*.json'))
+
+    def get_analytics_data(self) -> Optional[AnalyticsData]:
+        """Get analytics data handler for this segment."""
+        files = self.get_analytics_files()
+        return AnalyticsData(files) if files else None
+
+    def get_video_metadata(self) -> Optional[Dict]:
+        """Get video metadata for this segment."""
+        video_path = self.get_video_path()
+        if not video_path or not video_path.exists():
+            return None
+
+        return VideoMetadata(video_path).extract_metadata()
 
 @dataclass
 class Campaign:
