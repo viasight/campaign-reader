@@ -81,24 +81,49 @@ def test_context_manager_cleanup(sample_zip):
 
 def test_custom_extract_dir(sample_zip):
     """Test extraction to custom directory."""
-    with tempfile.TemporaryDirectory() as temp_dir:
+    temp_dir = tempfile.mkdtemp()
+    try:
         with CampaignReader(sample_zip, extract_dir=temp_dir) as reader:
             # Check if files are in custom directory
             test1_path = reader.get_extracted_path('test1.txt')
             assert str(test1_path).startswith(temp_dir)
             assert test1_path.exists()
+    finally:
+        # Clean up the temp directory manually
+        if os.path.exists(temp_dir):
+            for root, dirs, files in os.walk(temp_dir, topdown=False):
+                for name in files:
+                    os.unlink(os.path.join(root, name))
+                for name in dirs:
+                    os.rmdir(os.path.join(root, name))
+            os.rmdir(temp_dir)
 
 def test_cleanup_after_extraction_error(sample_zip):
     """Test cleanup after failed extraction."""
-    # Create a readonly directory to cause extraction to fail
-    with tempfile.TemporaryDirectory() as temp_dir:
-        os.chmod(temp_dir, 0o444)  # Make readonly
+    # Create a temporary directory that we'll manage manually
+    temp_dir = tempfile.mkdtemp()
+    try:
+        # Make the directory readonly
+        os.chmod(temp_dir, 0o444)
         
         with pytest.raises(CampaignZipError):
             CampaignReader(sample_zip, extract_dir=temp_dir)
         
+        # Make the directory writable again so we can check and clean it
+        os.chmod(temp_dir, 0o755)
+        
         # Verify no files were left behind
         assert len(os.listdir(temp_dir)) == 0
+    finally:
+        # Ensure cleanup
+        if os.path.exists(temp_dir):
+            os.chmod(temp_dir, 0o755)  # Ensure we can delete it
+            for root, dirs, files in os.walk(temp_dir, topdown=False):
+                for name in files:
+                    os.unlink(os.path.join(root, name))
+                for name in dirs:
+                    os.rmdir(os.path.join(root, name))
+            os.rmdir(temp_dir)
 
 def test_malicious_zip_paths():
     """Test handling of potentially malicious zip paths."""
