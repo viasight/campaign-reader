@@ -1,60 +1,46 @@
-import pytest
-import pandas as pd
-import numpy as np
-from datetime import datetime
-from pathlib import Path
-import json
-import zipfile
-import tempfile
-import os
-
-from campaign_reader import CampaignReader
+@pytest.fixture
+def sample_campaign_json():
+    return {
+        "id": "test-campaign",
+        "name": "Test Campaign",
+        "createdAt": 1733327149354,
+        "description": "Test campaign for unit tests",
+        "segments": [
+            {
+                "id": "test-segment",
+                "sequenceNumber": 0,
+                "recordedAt": 1733327149354,
+                "videoPath": "/data/video.mp4",
+                "analyticsFilePattern": "/data/analytics_{}.json"
+            }
+        ]
+    }
 
 @pytest.fixture
-def sample_analytics_data():
-    return [
-        {
-            "index": 0,
-            "systemTime": "1733327149354",
-            "videoTime": "0",
-            "gps": {
-                "latitude": 44.9553195,
-                "longitude": -93.3773398,
-                "accuracy": 14.813
-            },
-            "imu": {
-                "linear_acceleration": {
-                    "x": -0.020338991656899452,
-                    "y": 0.267397940158844,
-                    "z": 9.778867721557617
-                },
-                "angular_velocity": {
-                    "x": -0.001527163083665073,
-                    "y": -0.0024434609804302454,
-                    "z": 1.5271631127689034E-4
-                }
-            }
-        },
-        {
-            "index": 1,
-            "systemTime": "1733327149363",
-            "videoTime": "33478000",
-            "gps": {
-                "latitude": 44.9553195,
-                "longitude": -93.3773398,
-                "accuracy": 14.813
-            },
-            "imu": {
-                "linear_acceleration": {
-                    "x": -0.017946170642971992,
-                    "y": 0.2709871530532837,
-                    "z": 9.771689414978027
-                },
-                "angular_velocity": {
-                    "x": -3.054326225537807E-4,
-                    "y": 0.0012217304902151227,
-                    "z": 1.5271631127689034E-4
-                }
-            }
-        }
-    ]
+def test_campaign_zip(tmp_path, sample_analytics_data, sample_campaign_json):
+    """Create a test campaign zip file with sample data."""
+    # Create directory structure
+    campaign_dir = tmp_path / "campaign"
+    metadata_dir = campaign_dir / "metadata"
+    segment_dir = campaign_dir / "segments" / "test-segment" / "analytics"
+    metadata_dir.mkdir(parents=True)
+    segment_dir.mkdir(parents=True)
+    
+    # Write campaign metadata
+    with open(metadata_dir / "campaign.json", "w") as f:
+        json.dump(sample_campaign_json, f)
+    
+    # Write analytics data
+    with open(segment_dir / "analytics.json", "w") as f:
+        json.dump(sample_analytics_data, f)
+    
+    # Create zip file
+    zip_path = tmp_path / "test_campaign.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for root, _, files in os.walk(campaign_dir):
+            for file in files:
+                file_path = Path(root) / file
+                arc_path = file_path.relative_to(campaign_dir)
+                zf.write(file_path, arc_path)
+    
+    return zip_path
