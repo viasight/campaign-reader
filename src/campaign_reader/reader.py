@@ -16,18 +16,22 @@ class CampaignZipError(Exception):
 class CampaignReader:
     """A class for reading and analyzing campaign zip files."""
     
-    def __init__(self, zip_path: str, extract_dir: Optional[str] = None):
+    def __init__(self, zip_path: str, extract_dir: Optional[str] = None, require_campaign_metadata: bool = False):
         """Initialize the CampaignReader with a path to a zip file.
         
         Args:
             zip_path (str): Path to the campaign zip file
             extract_dir (Optional[str]): Directory to extract files to. If None, uses a temp directory
+            require_campaign_metadata (bool): If True, validates campaign structure and loads metadata
             
         Raises:
             FileNotFoundError: If zip_path doesn't exist
             CampaignZipError: If zip file is invalid or extraction fails
         """
         self.zip_path = Path(zip_path)
+        self.require_campaign_metadata = require_campaign_metadata
+        self._campaign = None
+        
         self._validate_zip_file()
         
         # Set up extraction directory
@@ -35,9 +39,12 @@ class CampaignReader:
         self._extract_dir = Path(extract_dir) if extract_dir else Path(tempfile.mkdtemp())
         self._extracted_files: Dict[str, Path] = {}
         
-        # Extract contents and load campaign
+        # Extract contents
         self._extract_contents()
-        self._load_campaign()
+        
+        # Load campaign if required
+        if self.require_campaign_metadata:
+            self._load_campaign()
 
     def _load_campaign(self) -> None:
         """Load campaign metadata from the extracted files."""
@@ -46,10 +53,10 @@ class CampaignReader:
             with open(metadata_path) as f:
                 campaign_data = json.load(f)
             
-            self.campaign = Campaign.from_dict(campaign_data)
+            self._campaign = Campaign.from_dict(campaign_data)
             
             # Set extracted paths for segments
-            for segment in self.campaign.segments:
+            for segment in self._campaign.segments:
                 segment._extracted_path = self._extract_dir / 'segments' / segment.id
                 
         except Exception as e:
@@ -67,8 +74,8 @@ class CampaignReader:
                 
                 self.file_list = zf.namelist()
                 
-                # Check for required files
-                if 'metadata/campaign.json' not in self.file_list:
+                # Check for required files only if campaign metadata is required
+                if self.require_campaign_metadata and 'metadata/campaign.json' not in self.file_list:
                     raise CampaignZipError("Campaign metadata file not found")
                 
                 # Basic security check for zip slip
@@ -101,33 +108,30 @@ class CampaignReader:
     
     def get_campaign_metadata(self) -> Campaign:
         """Get the campaign metadata."""
-        return self.campaign
+        if not self._campaign:
+            if not self.require_campaign_metadata:
+                self._load_campaign()
+        return self._campaign
     
     def get_segment(self, segment_id: str) -> Optional[CampaignSegment]:
         """Get a specific segment by ID."""
-        return self.campaign.get_segment(segment_id)
+        campaign = self.get_campaign_metadata()
+        return campaign.get_segment(segment_id) if campaign else None
     
     def get_segments(self) -> List[CampaignSegment]:
         """Get all segments in sequence order."""
-        return self.campaign.get_ordered_segments()
+        campaign = self.get_campaign_metadata()
+        return campaign.get_ordered_segments() if campaign else []
     
     def iter_segments(self) -> Generator[CampaignSegment, None, None]:
         """Iterate through segments in sequence order."""
-        for segment in self.campaign.get_ordered_segments():
-            yield segment
+        campaign = self.get_campaign_metadata()
+        if campaign:
+            for segment in campaign.get_ordered_segments():
+                yield segment
     
     def get_segment_analytics(self, segment_id: str) -> List[dict]:
-        """Get analytics data for a specific segment.
-        
-        Args:
-            segment_id (str): ID of the segment
-            
-        Returns:
-            List[dict]: List of analytics data from all analytics files
-            
-        Raises:
-            CampaignZipError: If segment not found or analytics can't be loaded
-        """
+        """Get analytics data for a specific segment."""
         segment = self.get_segment(segment_id)
         if not segment:
             raise CampaignZipError(f"Segment {segment_id} not found")
@@ -145,6 +149,14 @@ class CampaignReader:
             raise CampaignZipError(f"Failed to load analytics data: {str(e)}")
             
         return analytics_data
+    
+    def get_extracted_file(self, filename: str) -> Optional[Path]:
+        """Get path to an extracted file."""
+        return self._extracted_files.get(filename)
+    
+    def list_files(self) -> List[str]:
+        """Get a list of all files in the zip."""
+        return self.file_list
     
     def cleanup(self) -> None:
         """Remove all extracted files and directories."""
