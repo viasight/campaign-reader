@@ -7,6 +7,8 @@ from typing import List, Optional, Dict, Generator
 import logging
 from .models import Campaign, CampaignSegment
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
 class CampaignZipError(Exception):
@@ -153,6 +155,48 @@ class CampaignReader:
     def get_extracted_file(self, filename: str) -> Optional[Path]:
         """Get path to an extracted file."""
         return self._extracted_files.get(filename)
+
+    def get_segment_analytics_df(self, segment_id: str) -> pd.DataFrame:
+        """Get analytics data as a pandas DataFrame for a segment."""
+        segment = self.get_segment(segment_id)
+        if not segment:
+            raise CampaignZipError(f"Segment {segment_id} not found")
+
+        analytics = segment.get_analytics_data()
+        if not analytics:
+            raise CampaignZipError(
+                f"No analytics data found for segment {segment_id}"
+            )
+
+        return analytics.to_dataframe()
+
+    def get_segment_video_metadata(self, segment_id: str) -> Dict:
+        """Get video metadata for a segment."""
+        segment = self.get_segment(segment_id)
+        if not segment:
+            raise CampaignZipError(f"Segment {segment_id} not found")
+
+        metadata = segment.get_video_metadata()
+        if not metadata:
+            raise CampaignZipError(
+                f"Failed to get video metadata for segment {segment_id}"
+            )
+
+        return metadata
+
+    def validate_segment_analytics(self, segment_id: str) -> Dict[str, List[str]]:
+        """Validate analytics data for a segment."""
+        segment = self.get_segment(segment_id)
+        if not segment:
+            raise CampaignZipError(f"Segment {segment_id} not found")
+
+        analytics = segment.get_analytics_data()
+        if not analytics:
+            raise CampaignZipError(
+                f"No analytics data found for segment {segment_id}"
+            )
+
+        return analytics.validate()
     
     def list_files(self) -> List[str]:
         """Get a list of all files in the zip."""

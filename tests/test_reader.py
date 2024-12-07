@@ -1,9 +1,11 @@
 import os
-import pytest
 import tempfile
 import zipfile
-from pathlib import Path
+
+import pytest
+
 from campaign_reader import CampaignReader, CampaignZipError
+
 
 @pytest.fixture
 def sample_zip():
@@ -14,11 +16,12 @@ def sample_zip():
             zf.writestr('test1.txt', 'Test content 1')
             zf.writestr('folder/test2.txt', 'Test content 2')
             zf.writestr('config.json', '{"test": "data"}')
-        
+
         yield temp_zip.name
         # Cleanup after tests
         if os.path.exists(temp_zip.name):
             os.unlink(temp_zip.name)
+
 
 @pytest.fixture
 def bad_zip():
@@ -30,15 +33,18 @@ def bad_zip():
         if os.path.exists(temp_zip.name):
             os.unlink(temp_zip.name)
 
+
 def test_zip_file_not_found():
     """Test handling of non-existent zip file."""
     with pytest.raises(FileNotFoundError):
         CampaignReader('nonexistent.zip')
 
+
 def test_invalid_zip_file(bad_zip):
     """Test handling of invalid zip file."""
     with pytest.raises(CampaignZipError):
         CampaignReader(bad_zip)
+
 
 def test_successful_zip_reading(sample_zip):
     """Test successful reading of a valid zip file."""
@@ -52,6 +58,7 @@ def test_successful_zip_reading(sample_zip):
     finally:
         reader.cleanup()
 
+
 def test_extracted_file_access(sample_zip):
     """Test accessing extracted files."""
     with CampaignReader(sample_zip) as reader:
@@ -59,11 +66,12 @@ def test_extracted_file_access(sample_zip):
         test1_path = reader.get_extracted_file('test1.txt')
         assert test1_path is not None
         assert test1_path.exists()
-        
+
         # Read content
         with open(test1_path) as f:
             content = f.read()
         assert content == 'Test content 1'
+
 
 def test_context_manager_cleanup(sample_zip):
     """Test that files are cleaned up when using context manager."""
@@ -74,10 +82,11 @@ def test_context_manager_cleanup(sample_zip):
             path = reader.get_extracted_file(fname)
             assert path.exists()
             extracted_paths.append(path)
-    
+
     # Verify cleanup
     for path in extracted_paths:
         assert not path.exists()
+
 
 def test_custom_extract_dir(sample_zip):
     """Test extraction to custom directory."""

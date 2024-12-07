@@ -1,11 +1,13 @@
-import os
 import json
-import pytest
+import os
 import tempfile
 import zipfile
 from datetime import datetime
-from pathlib import Path
+
+import pytest
+
 from campaign_reader import CampaignReader, CampaignZipError
+
 
 @pytest.fixture
 def sample_campaign_data():

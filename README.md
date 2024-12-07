@@ -1,45 +1,196 @@
 # Campaign Reader
 
-A Python package for reading and analyzing campaign zip files with a pandas-like interface.
+A Python package for reading and analyzing video campaign data stored in ZIP archives. The package provides tools for handling campaign metadata, video segments, and analytics data with features for validation and analysis.
 
-## Overview
+## Features
 
-Campaign Reader is a specialized Python package designed to simplify the process of working with campaign data stored in zip files. It provides a familiar, pandas-like interface that allows developers to easily read, analyze, and manipulate campaign data.
+- **Campaign Structure Handling**
+  - ZIP file validation and extraction
+  - Campaign metadata parsing
+  - Segment access and ordering
+  - Resource cleanup and management
 
-## Features (Planned)
+- **Analytics Processing**
+  - Conversion to pandas DataFrame
+  - Time series analytics data validation
+  - GPS coordinate validation
+  - Gap detection in time series data
 
-- Easy opening and reading of campaign zip files
-- Pandas-like interface for data manipulation
-- Efficient iteration through campaign contents
-- Built-in data validation and error handling
-- Support for common campaign data formats
+- **Video Metadata**
+  - Video file information extraction
+  - Codec and format details
+  - Resolution and framerate analysis
+  - Size and duration information
 
-## Installation (Coming Soon)
+## Installation
 
 ```bash
 pip install campaign-reader
 ```
 
-## Basic Usage (Planned)
+### Dependencies
+
+- Python 3.8+
+- pandas
+- ffmpeg (optional, for video metadata extraction)
+
+## Usage
+
+### Basic Campaign Reading
 
 ```python
 from campaign_reader import CampaignReader
 
 # Open a campaign zip file
-campaign = CampaignReader('path/to/campaign.zip')
-
-# Access campaign data using familiar pandas-like operations
-for entry in campaign.iterrows():
-    print(entry)
-
-# Filter and analyze campaign data
-filtered_data = campaign.filter(criteria='some_condition')
+with CampaignReader("campaign.zip") as reader:
+    # Get campaign metadata
+    campaign = reader.get_campaign_metadata()
+    print(f"Campaign: {campaign.name}")
+    
+    # Iterate through segments
+    for segment in reader.iter_segments():
+        print(f"Segment {segment.sequence_number}: {segment.id}")
 ```
 
-## Contributing
+### Working with Analytics Data
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+```python
+with CampaignReader("campaign.zip") as reader:
+    # Get segment analytics as DataFrame
+    segment = reader.get_segments()[0]
+    df = reader.get_segment_analytics_df(segment.id)
+    
+    # Basic statistics
+    print("GPS Statistics:")
+    print(df[['latitude', 'longitude']].describe())
+    
+    # Validate analytics data
+    validation = reader.validate_segment_analytics(segment.id)
+    if validation['errors']:
+        print("Validation errors:", validation['errors'])
+    if validation['warnings']:
+        print("Validation warnings:", validation['warnings'])
+```
+
+### Extracting Video Metadata
+
+```python
+with CampaignReader("campaign.zip") as reader:
+    segment = reader.get_segments()[0]
+    metadata = reader.get_segment_video_metadata(segment.id)
+    
+    print(f"Video Resolution: {metadata['video']['width']}x{metadata['video']['height']}")
+    print(f"Duration: {metadata['duration']} seconds")
+    print(f"Format: {metadata['format']}")
+```
+
+## Campaign File Structure
+
+The package expects campaign ZIP files with the following structure:
+
+```
+campaign.zip
+├── metadata
+│   └── campaign.json
+└── segments
+    ├── {segment-uuid}
+    │   ├── analytics
+    │   │   ├── analytics.json
+    │   │   ├── analytics_1.json
+    │   │   └── analytics_{n}.json
+    │   └── video.mp4
+    └── {segment-uuid}
+        ├── analytics/
+        └── video.mp4
+```
+
+### Campaign Metadata Format
+
+```json
+{
+  "id": "060953aa-7baf-435b-aee2-2faaeb438aaf",
+  "name": "Test Campaign",
+  "createdAt": 1733434689359,
+  "description": "Campaign description",
+  "segments": [
+    {
+      "id": "7e0226fd-2903-4d4b-b399-f103e9063e06",
+      "sequenceNumber": 0,
+      "recordedAt": 1733434791634,
+      "videoPath": "/data/video.mp4",
+      "analyticsFilePattern": "/data/analytics_{}"
+    }
+  ]
+}
+```
+
+### Analytics Data Format
+
+```json
+{
+  "index": 0,
+  "systemTime": "1733327149354",
+  "videoTime": "0",
+  "gps": {
+    "latitude": 44.9553195,
+    "longitude": -93.3773398,
+    "accuracy": 14.813
+  },
+  "imu": {
+    "linear_acceleration": {
+      "x": -0.020338991656899452,
+      "y": 0.267397940158844,
+      "z": 9.778867721557617
+    },
+    "angular_velocity": {
+      "x": -0.001527163083665073,
+      "y": -0.0024434609804302454,
+      "z": 1.5271631127689034E-4
+    }
+  }
+}
+```
+
+## Error Handling
+
+The package provides specific error types for different failure scenarios:
+
+- `CampaignZipError`: Base exception for campaign zip file errors
+- `FileNotFoundError`: When the campaign file doesn't exist
+- `ValueError`: For video metadata extraction failures
+
+Example error handling:
+
+```python
+try:
+    with CampaignReader("campaign.zip") as reader:
+        metadata = reader.get_segment_video_metadata(segment_id)
+except CampaignZipError as e:
+    print(f"Campaign error: {e}")
+except ValueError as e:
+    print(f"Video metadata error: {e}")
+```
+
+## Development
+
+### Running Tests
+
+```bash
+# Install development dependencies
+pip install -e ".[dev]"
+
+# Run tests
+pytest
+```
+
+### Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+[MIT License](LICENSE)
