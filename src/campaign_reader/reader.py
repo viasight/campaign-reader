@@ -1,9 +1,11 @@
 import os
+import json
 import zipfile
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Generator
 import logging
+from .models import Campaign, CampaignSegment
 
 logger = logging.getLogger(__name__)
 
@@ -33,27 +35,41 @@ class CampaignReader:
         self._extract_dir = Path(extract_dir) if extract_dir else Path(tempfile.mkdtemp())
         self._extracted_files: Dict[str, Path] = {}
         
-        # Extract contents
+        # Extract contents and load campaign
         self._extract_contents()
-    
+        self._load_campaign()
+
+    def _load_campaign(self) -> None:
+        """Load campaign metadata from the extracted files."""
+        try:
+            metadata_path = self._extract_dir / 'metadata' / 'campaign.json'
+            with open(metadata_path) as f:
+                campaign_data = json.load(f)
+            
+            self.campaign = Campaign.from_dict(campaign_data)
+            
+            # Set extracted paths for segments
+            for segment in self.campaign.segments:
+                segment._extracted_path = self._extract_dir / 'segments' / segment.id
+                
+        except Exception as e:
+            raise CampaignZipError(f"Failed to load campaign metadata: {str(e)}")
+
     def _validate_zip_file(self) -> None:
-        """Validate that the zip file exists and can be opened.
-        
-        Raises:
-            FileNotFoundError: If file doesn't exist
-            CampaignZipError: If file is not a valid zip file
-        """
+        """Validate that the zip file exists and can be opened."""
         if not self.zip_path.exists():
             raise FileNotFoundError(f"File {self.zip_path} not found")
             
         try:
             with zipfile.ZipFile(self.zip_path, 'r') as zf:
-                # Check for zip file corruption
                 if zf.testzip() is not None:
                     raise CampaignZipError(f"Zip file {self.zip_path} is corrupted")
                 
-                # Store file listing
                 self.file_list = zf.namelist()
+                
+                # Check for required files
+                if 'metadata/campaign.json' not in self.file_list:
+                    raise CampaignZipError("Campaign metadata file not found")
                 
                 # Basic security check for zip slip
                 for fname in self.file_list:
@@ -62,57 +78,73 @@ class CampaignReader:
                         
         except zipfile.BadZipFile:
             raise CampaignZipError(f"File {self.zip_path} is not a valid zip file")
-    
+
     def _extract_contents(self) -> None:
-        """Extract the contents of the zip file to the extraction directory.
-        
-        Raises:
-            CampaignZipError: If extraction fails
-        """
+        """Extract the contents of the zip file to the extraction directory."""
         try:
             with zipfile.ZipFile(self.zip_path, 'r') as zf:
-                # Create extraction directory if it doesn't exist
                 self._extract_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Extract each file safely
                 for fname in self.file_list:
-                    # Create safe extraction path
                     extract_path = self._extract_dir / fname
                     
-                    # Ensure extraction path is within extract_dir
                     if not extract_path.resolve().is_relative_to(self._extract_dir.resolve()):
                         raise CampaignZipError(f"Attempted path traversal: {fname}")
                     
-                    # Create parent directories if needed
                     extract_path.parent.mkdir(parents=True, exist_ok=True)
-                    
-                    # Extract and store the path
                     zf.extract(fname, self._extract_dir)
                     self._extracted_files[fname] = extract_path
                     
         except Exception as e:
-            # Clean up any partially extracted files
             self.cleanup()
             raise CampaignZipError(f"Failed to extract zip contents: {str(e)}")
     
-    def get_extracted_path(self, filename: str) -> Optional[Path]:
-        """Get the extracted path for a given filename.
+    def get_campaign_metadata(self) -> Campaign:
+        """Get the campaign metadata."""
+        return self.campaign
+    
+    def get_segment(self, segment_id: str) -> Optional[CampaignSegment]:
+        """Get a specific segment by ID."""
+        return self.campaign.get_segment(segment_id)
+    
+    def get_segments(self) -> List[CampaignSegment]:
+        """Get all segments in sequence order."""
+        return self.campaign.get_ordered_segments()
+    
+    def iter_segments(self) -> Generator[CampaignSegment, None, None]:
+        """Iterate through segments in sequence order."""
+        for segment in self.campaign.get_ordered_segments():
+            yield segment
+    
+    def get_segment_analytics(self, segment_id: str) -> List[dict]:
+        """Get analytics data for a specific segment.
         
         Args:
-            filename (str): Name of file in the zip
+            segment_id (str): ID of the segment
             
         Returns:
-            Optional[Path]: Path to extracted file or None if not found
+            List[dict]: List of analytics data from all analytics files
+            
+        Raises:
+            CampaignZipError: If segment not found or analytics can't be loaded
         """
-        return self._extracted_files.get(filename)
-    
-    def list_files(self) -> List[str]:
-        """Get a list of all files in the campaign zip.
-        
-        Returns:
-            List[str]: List of filenames
-        """
-        return self.file_list
+        segment = self.get_segment(segment_id)
+        if not segment:
+            raise CampaignZipError(f"Segment {segment_id} not found")
+            
+        analytics_dir = segment.get_analytics_path()
+        if not analytics_dir or not analytics_dir.exists():
+            raise CampaignZipError(f"Analytics directory not found for segment {segment_id}")
+            
+        analytics_data = []
+        try:
+            for analytics_file in sorted(analytics_dir.glob('analytics*.json')):
+                with open(analytics_file) as f:
+                    analytics_data.extend(json.load(f))
+        except Exception as e:
+            raise CampaignZipError(f"Failed to load analytics data: {str(e)}")
+            
+        return analytics_data
     
     def cleanup(self) -> None:
         """Remove all extracted files and directories."""
@@ -135,13 +167,12 @@ class CampaignReader:
                             try:
                                 dir_path.rmdir()
                             except OSError:
-                                pass  # Directory might not be empty or might be readonly
+                                pass
                     
-                    # Remove the temp directory itself
                     try:
                         self._extract_dir.rmdir()
                     except OSError:
-                        pass  # Directory might not be empty or might be readonly
+                        pass
 
                 # Restore original permissions if we changed them
                 if not os.access(self._extract_dir, os.W_OK):
@@ -151,9 +182,7 @@ class CampaignReader:
                 logger.error(f"Error during cleanup: {str(e)}")
     
     def __enter__(self):
-        """Context manager entry."""
         return self
     
     def __exit__(self, exc_type, exc_value, traceback):
-        """Context manager exit with cleanup."""
         self.cleanup()
