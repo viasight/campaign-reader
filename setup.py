@@ -8,6 +8,8 @@ setup(
     install_requires=[
         'pandas>=1.0.0',
         'numpy>=1.18.0',
+        'opencv-python>=4.5.0',
+        'opencv-python-headless>=4.5.0;platform_system!="Windows"',
     ],
     author='Zikomo Fields',
     author_email='zikomo@zfields.tech',
