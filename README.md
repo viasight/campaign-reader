@@ -15,6 +15,8 @@ A Python package for reading and analyzing video campaign data stored in ZIP arc
   - Time series analytics data validation
   - GPS coordinate validation
   - Gap detection in time series data
+  - Statistical aggregation and analysis
+  - Time-based data resampling
 
 - **Video Metadata**
   - Video file information extraction
@@ -33,6 +35,7 @@ pip install campaign-reader
 - Python 3.8+
 - pandas
 - ffmpeg (optional, for video metadata extraction)
+- geopy (for GPS distance calculations)
 
 ## Usage
 
@@ -70,6 +73,30 @@ with CampaignReader("campaign.zip") as reader:
         print("Validation errors:", validation['errors'])
     if validation['warnings']:
         print("Validation warnings:", validation['warnings'])
+```
+
+### Analytics Aggregation and Analysis
+
+```python
+from campaign_reader.analytics import AnalyticsAggregator
+
+with CampaignReader("campaign.zip") as reader:
+    # Get analytics data
+    df = reader.get_segment_analytics_df(segment_id)
+    
+    # Create aggregator
+    aggregator = AnalyticsAggregator(df)
+    
+    # Get comprehensive statistics
+    summary = aggregator.get_summary()
+    print(f"Total Distance: {summary['spatial']['total_distance']:.2f} meters")
+    print(f"Average Speed: {summary['spatial']['avg_speed']:.2f} m/s")
+    print(f"Duration: {summary['temporal']['total_duration']:.2f} seconds")
+    
+    # Aggregate data by time interval
+    resampled = aggregator.aggregate_by_interval('5S')  # 5-second intervals
+    print("\nIMU Statistics by 5-second intervals:")
+    print(resampled['linear_acceleration_z'].describe())
 ```
 
 ### Extracting Video Metadata
@@ -150,6 +177,25 @@ campaign.zip
   }
 }
 ```
+
+## Analytics Aggregation
+
+The package provides comprehensive analytics aggregation through the `AnalyticsAggregator` class:
+
+- **Temporal Statistics**
+  - Total duration
+  - Average sampling rate
+  - Start and end timestamps
+
+- **Spatial Statistics**
+  - Total distance traveled
+  - Average and maximum speeds
+  - GPS accuracy ranges
+
+- **Motion Statistics**
+  - IMU data analysis (acceleration and angular velocity)
+  - Statistical summaries (mean, std, min, max)
+  - Time-based aggregation and resampling
 
 ## Error Handling
 
