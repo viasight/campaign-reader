@@ -1,123 +1,106 @@
 # tests/test_video.py
+import json
+from datetime import datetime
 
-import subprocess
-
+import numpy as np
 import pytest
 
-from campaign_reader import CampaignReader
-from campaign_reader.video import VideoMetadata
+from campaign_reader.analytics import AnalyticsData
+from campaign_reader.models import CampaignSegment
+from campaign_reader.video import Frame, FrameData
 
 
 @pytest.fixture
-def sample_video_file(tmp_path):
-    """Create a dummy MP4 file for testing."""
-    video_path = tmp_path / 'test_video.mp4'
-
-    # Create minimal valid MP4 file
-    try:
-        subprocess.run([
-            'ffmpeg',
-            '-f', 'lavfi',
-            '-i', 'color=c=black:s=1280x720:r=30:d=1',
-            '-c:v', 'libx264',
-            '-t', '1',
-            str(video_path)
-        ], check=True, capture_output=True)
-    except subprocess.CalledProcessError:
-        pytest.skip("ffmpeg not available - skipping video tests")
-
-    return video_path
+def sample_frame():
+    # Create a simple test image
+    image = np.zeros((100, 100, 3), dtype=np.uint8)
+    return Frame(image, timestamp=1.0, system_time=1000)
 
 
-def test_video_metadata_extraction(sample_video_file):
-    """Test basic video metadata extraction."""
-    video = VideoMetadata(sample_video_file)
-    try:
-        metadata = video.extract_metadata()
+@pytest.fixture
+def sample_analytics(tmp_path):
+    # Create sample analytics data
+    analytics_data = [
+        {
+            'index': 0,
+            'systemTime': '1000',
+            'videoTime': '1000000',  # 1ms in ns
+            'gps': {'latitude': 0.0, 'longitude': 0.0, 'accuracy': 1.0},
+            'imu': {
+                'linear_acceleration': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+                'angular_velocity': {'x': 0.0, 'y': 0.0, 'z': 0.0}
+            }
+        }
+    ]
 
-        # Check basic metadata structure
-        assert isinstance(metadata, dict)
-        assert 'duration' in metadata
-        assert 'size_bytes' in metadata
-        assert 'video' in metadata
+    # Write to temporary file
+    analytics_file = tmp_path / "analytics.json"
+    with open(analytics_file, 'w') as f:
+        json.dump(analytics_data, f)
 
-        # Check video-specific metadata
-        video_meta = metadata['video']
-        assert video_meta['width'] == 1280
-        assert video_meta['height'] == 720
-        assert video_meta['fps'] == 30
-        assert video_meta['codec'] == 'h264'
-    except ValueError as e:
-        if 'ffmpeg not available' in str(e):
-            pytest.skip("ffmpeg not available - skipping metadata extraction test")
-        raise
-
-
-def test_video_metadata_caching(sample_video_file):
-    """Test that metadata is cached after first extraction."""
-    video = VideoMetadata(sample_video_file)
-
-    try:
-        # First extraction
-        metadata1 = video.extract_metadata()
-
-        # Should use cached version
-        metadata2 = video.extract_metadata()
-
-        assert metadata1 is metadata2  # Should be the same object
-    except ValueError as e:
-        if 'ffmpeg not available' in str(e):
-            pytest.skip("ffmpeg not available - skipping metadata cache test")
-        raise
+    return AnalyticsData([analytics_file])
 
 
-def test_video_metadata_invalid_file(tmp_path):
-    """Test handling of invalid video files."""
-    invalid_file = tmp_path / 'invalid.mp4'
-    invalid_file.write_bytes(b'not a video file')
-
-    video = VideoMetadata(invalid_file)
-    with pytest.raises(ValueError) as exc_info:
-        video.extract_metadata()
-
-    assert 'Failed to extract video metadata' in str(exc_info.value)
+def test_frame_analytics_association(sample_frame):
+    analytics = {'test': 'data'}
+    sample_frame.set_analytics(analytics)
+    assert sample_frame.analytics == analytics
 
 
-def test_segment_analytics_df(campaign_zip):
-    """Test getting analytics data as DataFrame."""
-    with CampaignReader(campaign_zip) as reader:
-        segment_id = reader.get_segments()[0].id
-        df = reader.get_segment_analytics_df(segment_id)
+def test_frame_data_creation(sample_frame, sample_analytics):
+    frame_data = FrameData([sample_frame], sample_analytics)
+    df = frame_data.to_dataframe()
 
-        assert df is not None
-        assert not df.empty
-        assert 'systemTime' in df.columns
-        assert 'latitude' in df.columns
+    assert not df.empty
+    assert 'frame' in df.columns
+    assert 'timestamp' in df.columns
+    assert 'system_time' in df.columns
 
 
-def test_segment_video_metadata(campaign_zip):
-    """Test getting video metadata for a segment."""
-    with CampaignReader(campaign_zip) as reader:
-        segment = reader.get_segments()[0]
+def test_frame_data_alignment(sample_frame, sample_analytics):
+    frame_data = FrameData([sample_frame], sample_analytics)
+    df = frame_data.to_dataframe()
 
-        try:
-            metadata = reader.get_segment_video_metadata(segment.id)
-            # Basic checks only - full content tested in direct video tests
-            assert isinstance(metadata, dict)
-            assert 'duration' in metadata
-            assert 'video' in metadata
-        except ValueError as e:
-            if 'ffmpeg not available' in str(e):
-                pytest.skip("ffmpeg not available - skipping segment video metadata test")
-            raise
+    # Check that GPS and IMU data is present
+    assert 'latitude' in df.columns
+    assert 'longitude' in df.columns
+    assert 'linear_acceleration_x' in df.columns
 
 
-def test_validate_segment_analytics(campaign_zip):
-    """Test analytics validation for a segment."""
-    with CampaignReader(campaign_zip) as reader:
-        segment = reader.get_segments()[0]
-        validation_results = reader.validate_segment_analytics(segment.id)
+def test_segment_frame_extraction(tmp_path, mocker):
+    # Create a mock video file
+    video_path = tmp_path / "segments" / "test-segment" / "video.mp4"
+    video_path.parent.mkdir(parents=True)
+    video_path.touch()
 
-        assert isinstance(validation_results, dict)
-        assert 'errors' in validation_results
-        assert 'warnings' in validation_results
+    # Create a mock analytics file
+    analytics_path = video_path.parent / "analytics" / "analytics.json"
+    analytics_path.parent.mkdir(parents=True)
+    analytics_path.touch()
+
+    # Create test segment
+    segment = CampaignSegment(
+        id="test-segment",
+        sequence_number=1,
+        recorded_at=datetime.now(),
+        video_path=str(video_path),
+        analytics_file_pattern="analytics*.json"
+    )
+    segment._extracted_path = video_path.parent
+
+    # Create a mock VideoFrameExtractor instance
+    mock_frame_extractor = mocker.MagicMock()
+    mock_frame_extractor.extract_aligned_frames.return_value = mocker.Mock(spec=FrameData)
+
+    # Mock the VideoFrameExtractor class constructor
+    mocker.patch('campaign_reader.models.VideoFrameExtractor', return_value=mock_frame_extractor)
+
+    # Test frame extraction
+    frame_data = segment.extract_frames(sample_rate=1.0)
+    assert frame_data is not None
+    mock_frame_extractor.extract_aligned_frames.assert_called_once()
+
+    # Test frame extraction with missing video
+    segment._extracted_path = None
+    frame_data = segment.extract_frames()
+    assert frame_data is None

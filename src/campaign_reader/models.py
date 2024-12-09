@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Union
 from pathlib import Path
 
 from campaign_reader.analytics import AnalyticsData
-from campaign_reader.video import VideoMetadata
+from campaign_reader.video import VideoMetadata, VideoFrameExtractor, FrameData, logger
 
 
 @dataclass
@@ -63,6 +63,40 @@ class CampaignSegment:
             return None
 
         return VideoMetadata(video_path).extract_metadata()
+
+    def extract_frames(self,
+                       sample_rate: Optional[float] = None,
+                       align_analytics: bool = True) -> Optional[FrameData]:
+        """
+        Extract frames from the video and optionally align with analytics data.
+
+        Args:
+            sample_rate: Optional frames per second to extract (default: video fps)
+            align_analytics: Whether to align frames with analytics data
+
+        Returns:
+            FrameData object containing aligned frames and analytics if successful,
+            None otherwise
+        """
+        video_path = self.get_video_path()
+        if not video_path or not video_path.exists():
+            return None
+
+        extractor = VideoFrameExtractor(video_path)
+        analytics_data = self.get_analytics_data() if align_analytics else None
+
+        if align_analytics and not analytics_data:
+            return None
+
+        try:
+            frame_data = extractor.extract_aligned_frames(
+                analytics_data=analytics_data,
+                sample_rate=sample_rate
+            )
+            return frame_data
+        except Exception as e:
+            logger.error(f"Failed to extract frames from segment {self.id}: {str(e)}")
+            return None
 
 @dataclass
 class Campaign:
