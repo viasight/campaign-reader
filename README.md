@@ -18,11 +18,13 @@ A Python package for reading and analyzing video campaign data stored in ZIP arc
   - Statistical aggregation and analysis
   - Time-based data resampling
 
-- **Video Metadata**
-  - Video file information extraction
-  - Codec and format details
-  - Resolution and framerate analysis
-  - Size and duration information
+- **Video Processing**
+  - Video metadata extraction
+  - Frame extraction and analytics alignment
+  - Time-synchronized frame and sensor data
+  - Customizable frame sampling rates
+  - Support for frame-by-frame analysis
+  - Batch frame extraction capabilities
 
 ## Installation
 
@@ -109,6 +111,68 @@ with CampaignReader("campaign.zip") as reader:
     print(f"Video Resolution: {metadata['video']['width']}x{metadata['video']['height']}")
     print(f"Duration: {metadata['duration']} seconds")
     print(f"Format: {metadata['format']}")
+```
+
+### Frame Extraction and Analytics Alignment
+
+```python
+from campaign_reader import CampaignReader
+from pathlib import Path
+
+with CampaignReader("campaign.zip") as reader:
+    # Get a segment
+    segment = reader.get_segments()[0]
+    
+    # Extract frames with aligned analytics data
+    frame_data = segment.extract_frames(sample_rate=5.0)  # 5 frames per second
+    
+    # Convert to DataFrame with aligned data
+    df = frame_data.to_dataframe()
+    
+    # Access frame data
+    for idx, row in df.iterrows():
+        frame = row['frame']  # numpy array containing the image
+        timestamp = row['timestamp']  # video timestamp
+        latitude = row['latitude']  # GPS data
+        acceleration = row['linear_acceleration_x']  # IMU data
+        
+        # Example: Save frames with GPS coordinates in filename
+        frame_path = Path(f"output/frame_{timestamp}_{latitude}_{longitude}.jpg")
+        frame_data.save_frames(frame_path)
+
+# Batch processing multiple segments
+with CampaignReader("campaign.zip") as reader:
+    for segment in reader.iter_segments():
+        # Extract frames from all segments
+        frame_data = segment.extract_frames(
+            sample_rate=1.0,  # 1 frame per second
+            align_analytics=True  # Align with analytics data
+        )
+        
+        if frame_data is not None:
+            # Process aligned frame data
+            df = frame_data.to_dataframe()
+            print(f"Extracted {len(df)} frames from segment {segment.id}")
+```
+
+### Working with Frame Data
+
+The `FrameData` class provides several useful methods for working with extracted frames:
+
+```python
+# Save all frames to a directory
+frame_data.save_frames(Path("output_directory"), format='jpg')
+
+# Get DataFrame with aligned data
+df = frame_data.to_dataframe()
+
+# DataFrame columns include:
+# - timestamp: Video timestamp in seconds
+# - system_time: System timestamp from analytics
+# - frame: numpy array containing the image
+# - latitude, longitude: GPS coordinates
+# - linear_acceleration_x/y/z: IMU acceleration data
+# - angular_velocity_x/y/z: IMU gyroscope data
 ```
 
 ## Campaign File Structure
@@ -204,17 +268,20 @@ The package provides specific error types for different failure scenarios:
 - `CampaignZipError`: Base exception for campaign zip file errors
 - `FileNotFoundError`: When the campaign file doesn't exist
 - `ValueError`: For video metadata extraction failures
+- `VideoExtractionError`: For frame extraction and processing failures
+- `AnalyticsAlignmentError`: When analytics data cannot be aligned with frames
 
-Example error handling:
+Example error handling for frame extraction:
 
 ```python
 try:
-    with CampaignReader("campaign.zip") as reader:
-        metadata = reader.get_segment_video_metadata(segment_id)
-except CampaignZipError as e:
-    print(f"Campaign error: {e}")
+    frame_data = segment.extract_frames(sample_rate=1.0)
+    if frame_data is None:
+        print("No frames extracted - check video file and analytics data")
+    else:
+        df = frame_data.to_dataframe()
 except ValueError as e:
-    print(f"Video metadata error: {e}")
+    print(f"Error extracting frames: {e}")
 ```
 
 ## Development
