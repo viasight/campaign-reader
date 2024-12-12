@@ -84,8 +84,8 @@ def test_analytics_to_dataframe(analytics_data):
     assert len(df) == 6  # 3 files × 2 records each
 
     # Check column types
-    assert pd.api.types.is_datetime64_any_dtype(df['systemTime'])
-    assert pd.api.types.is_timedelta64_dtype(df['videoTime'])
+    assert pd.api.types.is_float_dtype(df['systemTime'])
+    assert pd.api.types.is_float_dtype(df['videoTime'])
     assert pd.api.types.is_float_dtype(df['latitude'])
     assert pd.api.types.is_float_dtype(df['linear_acceleration_x'])
 

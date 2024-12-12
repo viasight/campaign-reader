@@ -1,21 +1,17 @@
 # tests/test_video.py
 import json
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch, MagicMock
+import os
 
 import numpy as np
 import pytest
+import pandas as pd
 
 from campaign_reader.analytics import AnalyticsData
 from campaign_reader.models import CampaignSegment
-from campaign_reader.video import Frame, FrameData, VideoFrameExtractor, VideoMetadata
-
-
-@pytest.fixture
-def sample_frame():
-    # Create a simple test image
-    image = np.zeros((100, 100, 3), dtype=np.uint8)
-    return Frame(image, timestamp=1.0, system_time=1000)
+from campaign_reader.video import VideoMetadata, FrameProcessor, FrameInfo, FrameIterator
 
 
 @pytest.fixture
@@ -66,108 +62,9 @@ def mock_metadata():
         }
     }
 
-def test_frame_analytics_association(sample_frame):
-    analytics = {'test': 'data'}
-    sample_frame.set_analytics(analytics)
-    assert sample_frame.analytics == analytics
 
-
-def test_frame_data_creation(sample_frame, sample_analytics):
-    frame_data = FrameData([sample_frame], sample_analytics)
-    df = frame_data.to_dataframe()
-
-    assert not df.empty
-    assert 'frame' in df.columns
-    assert 'timestamp' in df.columns
-    assert 'system_time' in df.columns
-
-
-def test_frame_data_alignment(sample_frame, sample_analytics):
-    frame_data = FrameData([sample_frame], sample_analytics)
-    df = frame_data.to_dataframe()
-
-    # Check that GPS and IMU data is present
-    assert 'latitude' in df.columns
-    assert 'longitude' in df.columns
-    assert 'linear_acceleration_x' in df.columns
-
-
-def test_segment_frame_extraction(tmp_path, mocker):
-    # Create a mock video file
-    video_path = tmp_path / "segments" / "test-segment" / "video.mp4"
-    video_path.parent.mkdir(parents=True)
-    video_path.touch()
-
-    # Create a mock analytics file
-    analytics_path = video_path.parent / "analytics" / "analytics.json"
-    analytics_path.parent.mkdir(parents=True)
-    analytics_path.touch()
-
-    # Create test segment
-    segment = CampaignSegment(
-        id="test-segment",
-        sequence_number=1,
-        recorded_at=datetime.now(),
-        video_path=str(video_path),
-        analytics_file_pattern="analytics*.json"
-    )
-    segment._extracted_path = video_path.parent
-
-    # Create a mock VideoFrameExtractor instance
-    mock_frame_extractor = mocker.MagicMock()
-    mock_frame_extractor.extract_aligned_frames.return_value = mocker.Mock(spec=FrameData)
-
-    # Mock the VideoFrameExtractor class constructor
-    mocker.patch('campaign_reader.models.VideoFrameExtractor', return_value=mock_frame_extractor)
-
-    # Test frame extraction
-    frame_data = segment.extract_frames(sample_rate=1.0)
-    assert frame_data is not None
-    mock_frame_extractor.extract_aligned_frames.assert_called_once()
-
-    # Test frame extraction with missing video
-    segment._extracted_path = None
-    frame_data = segment.extract_frames()
-    assert frame_data is None
-
-
-def test_video_frame_extractor_open(mock_video_file, mock_metadata):
-    """Test VideoFrameExtractor.open() method."""
-    with patch('cv2.VideoCapture') as mock_cap:
-        # Setup mocks
-        mock_cap_instance = MagicMock()
-        mock_cap_instance.isOpened.return_value = True
-        mock_cap.return_value = mock_cap_instance
-
-        # Create a mock VideoMetadata instance
-        mock_metadata_instance = MagicMock(spec=VideoMetadata)
-        mock_metadata_instance.extract_metadata.return_value = mock_metadata
-
-        # Create the extractor with the mock metadata
-        extractor = VideoFrameExtractor(mock_video_file)
-        extractor.metadata = mock_metadata_instance  # Replace the metadata instance
-
-        # Test successful open
-        extractor.open()
-
-        assert extractor._cap is not None
-        assert extractor._fps == 30.0
-        mock_cap.assert_called_once_with(str(mock_video_file))
-
-        # Test reopen doesn't create new capture
-        extractor.open()
-        mock_cap.assert_called_once()  # Should still only be called once
-
-        # Test failed open
-        mock_cap_instance.isOpened.return_value = False
-        extractor = VideoFrameExtractor(mock_video_file)
-        extractor.metadata = mock_metadata_instance  # Replace the metadata instance
-        with pytest.raises(ValueError, match="Failed to open video file"):
-            extractor.open()
-
-
-def test_video_frame_extractor_extract_frames(mock_video_file, mock_metadata):
-    """Test VideoFrameExtractor.extract_frames() method."""
+def test_frame_iterator(mock_video_file, mock_metadata):
+    """Test the FrameIterator."""
     with patch('cv2.VideoCapture') as mock_cap:
         # Setup mocks
         mock_cap_instance = MagicMock()
@@ -176,73 +73,245 @@ def test_video_frame_extractor_extract_frames(mock_video_file, mock_metadata):
         mock_cap_instance.get.return_value = 30.0  # FPS
         mock_cap.return_value = mock_cap_instance
 
-        # Create a mock VideoMetadata instance
+        # Test basic iteration
+        timestamps = np.array([0.0, 1.0, 2.0])
+        analytics_lookup = {
+            0.0: {'systemTime': '1000', 'data': 'test1'},
+            1.0: {'systemTime': '2000', 'data': 'test2'}
+        }
+
+        with FrameIterator(mock_video_file, timestamps, analytics_lookup) as frame_iter:
+            frames = list(frame_iter)
+
+            assert len(frames) == 3
+            assert all(isinstance(frame_info, FrameInfo) for frame_info, _ in frames)
+            assert all(isinstance(frame, np.ndarray) for _, frame in frames)
+
+            # Check analytics alignment
+            # Analytics should match exactly for 0.0 and 1.0
+            assert frames[0][0].analytics['data'] == 'test1'
+            assert frames[1][0].analytics['data'] == 'test2'
+            # For 2.0, it should use nearest analytics within 1-second window (from 1.0)
+            assert frames[2][0].analytics['data'] == 'test2'
+
+
+def test_frame_processor_basic(mock_video_file, mock_metadata, tmp_path):
+    """Test basic FrameProcessor functionality."""
+    with patch('cv2.VideoCapture') as mock_cap:
+        # Setup mocks
+        mock_cap_instance = MagicMock()
+        mock_cap_instance.isOpened.return_value = True
+        mock_cap_instance.read.return_value = (True, np.zeros((100, 100, 3), dtype=np.uint8))
+        mock_cap_instance.get.return_value = 30.0  # FPS
+        mock_cap.return_value = mock_cap_instance
+
+        # Create mock metadata
         mock_metadata_instance = MagicMock(spec=VideoMetadata)
         mock_metadata_instance.extract_metadata.return_value = mock_metadata
 
-        # Create extractor and test timestamps
-        extractor = VideoFrameExtractor(mock_video_file)
-        extractor.metadata = mock_metadata_instance  # Replace the metadata instance
-        extractor.open()
+        # Create processor
+        processor = FrameProcessor(mock_video_file)
+        processor.metadata = mock_metadata_instance
 
-        timestamps = np.array([0.0, 1.0, 2.0])
-        analytics = [
-            {
-                'videoTime': '0',
-                'systemTime': '1000',
-                'data': 'test1'
-            },
-            {
-                'videoTime': '1000000000',  # 1 second in ns
-                'systemTime': '2000',
-                'data': 'test2'
-            }
-        ]
+        # Test basic frame processing without saving
+        df = processor.process_frames(sample_rate=1.0)
 
-        frames = extractor.extract_frames(timestamps, analytics)
+        assert isinstance(df, pd.DataFrame)
+        assert 'timestamp' in df.columns
+        assert 'frame_number' in df.columns
+        assert 'frame_path' in df.columns
+        assert df['frame_path'].isna().all()  # No paths when not saving
 
-        # Verify basic extraction
-        assert len(frames) == 3
-        assert all(isinstance(f, Frame) for f in frames)
-        assert all(f.image.shape == (100, 100, 3) for f in frames)
+        # Test frame processing with saving
+        output_dir = tmp_path / "frames"
+        df = processor.process_frames(sample_rate=1.0, output_dir=output_dir)
 
-        # Verify timestamps
-        assert [f.timestamp for f in frames] == [0.0, 1.0, 2.0]
-
-        # Verify analytics alignment
-        assert frames[0].analytics is not None
-        assert frames[0].analytics['data'] == 'test1'
-        assert frames[1].analytics is not None
-        assert frames[1].analytics['data'] == 'test2'
-        assert frames[2].analytics is None  # No analytics for t=2.0
-
-        # Test extraction without analytics
-        frames = extractor.extract_frames(timestamps)
-        assert len(frames) == 3
-        assert all(f.analytics is None for f in frames)
-
-        # Test failed frame read
-        mock_cap_instance.read.return_value = (False, None)
-        frames = extractor.extract_frames(timestamps)
-        assert len(frames) == 0
+        assert not df['frame_path'].isna().any()  # All frames should have paths
+        assert all(os.path.dirname(path) == str(output_dir) for path in df['frame_path'])
 
 
-def test_video_frame_extractor_error_handling(mock_video_file):
-    """Test error handling in VideoFrameExtractor."""
-    # Test extract_frames without opening
-    extractor = VideoFrameExtractor(mock_video_file)
-    with pytest.raises(ValueError, match="Video file not opened"):
-        extractor.extract_frames(np.array([0.0]))
-
-    # Test cleanup on error
+def test_frame_processor_with_analytics(mock_video_file, mock_metadata, sample_analytics, tmp_path):
+    """Test FrameProcessor with analytics data."""
     with patch('cv2.VideoCapture') as mock_cap:
+        # Setup mocks
         mock_cap_instance = MagicMock()
-        mock_cap_instance.isOpened.return_value = False
+        mock_cap_instance.isOpened.return_value = True
+        mock_cap_instance.read.return_value = (True, np.zeros((100, 100, 3), dtype=np.uint8))
+        mock_cap_instance.get.return_value = 30.0  # FPS
         mock_cap.return_value = mock_cap_instance
 
-        extractor = VideoFrameExtractor(mock_video_file)
-        with pytest.raises(ValueError):
-            extractor.open()
+        # Create mock metadata
+        mock_metadata_instance = MagicMock(spec=VideoMetadata)
+        mock_metadata_instance.extract_metadata.return_value = mock_metadata
 
-        assert extractor._cap is None
-        mock_cap_instance.release.assert_called_once()
+        # Mock stat for video file
+        with patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value = MagicMock(st_size=1024)  # Non-zero file size
+
+            # Create processor with analytics
+            processor = FrameProcessor(mock_video_file, sample_analytics)
+            processor.metadata = mock_metadata_instance
+
+            # Test processing with analytics
+            df = processor.process_frames(sample_rate=1.0)
+
+            assert isinstance(df, pd.DataFrame)
+            assert 'timestamp' in df.columns
+            assert 'system_time' in df.columns
+            assert 'latitude' in df.columns
+            assert 'longitude' in df.columns
+            assert 'linear_acceleration_x' in df.columns
+
+
+def test_frame_processor_custom_callback(mock_video_file, mock_metadata):
+    """Test FrameProcessor with custom callback."""
+    with patch('cv2.VideoCapture') as mock_cap:
+        # Setup mocks
+        mock_cap_instance = MagicMock()
+        mock_cap_instance.isOpened.return_value = True
+        mock_cap_instance.read.return_value = (True, np.zeros((100, 100, 3), dtype=np.uint8))
+        mock_cap_instance.get.return_value = 30.0  # FPS
+        mock_cap.return_value = mock_cap_instance
+
+        # Create mock metadata
+        mock_metadata_instance = MagicMock(spec=VideoMetadata)
+        mock_metadata_instance.extract_metadata.return_value = mock_metadata
+
+        # Create processor
+        processor = FrameProcessor(mock_video_file)
+        processor.metadata = mock_metadata_instance
+
+        # Test callback
+        processed_frames = []
+
+        def callback(frame_info, frame):
+            processed_frames.append((frame_info, frame))
+
+        processor.process_frames(sample_rate=1.0, frame_callback=callback)
+
+        assert len(processed_frames) > 0
+        assert all(isinstance(info, FrameInfo) for info, _ in processed_frames)
+        assert all(isinstance(frame, np.ndarray) for _, frame in processed_frames)
+
+
+def test_segment_frame_processing(tmp_path, mocker):
+    """Test frame processing in CampaignSegment."""
+    # Create a mock video file
+    video_path = tmp_path / "segments" / "test-segment" / "video.mp4"
+    video_path.parent.mkdir(parents=True)
+    video_path.touch()
+
+    # Set up analytics path first
+    analytics_path = video_path.parent / "analytics" / "analytics.json"
+    analytics_path.parent.mkdir(parents=True)
+
+    # Set up all mocks at the top level
+    with patch('pathlib.Path.stat') as mock_stat, \
+            patch('pathlib.Path.exists') as mock_exists, \
+            patch('pathlib.Path.glob') as mock_glob:
+        mock_stat.return_value = MagicMock(st_size=1024)
+        mock_exists.return_value = True
+        mock_glob.return_value = [analytics_path]
+
+        # Create analytics file
+        with open(analytics_path, 'w') as f:
+            json.dump([{
+                'index': 0,
+                'systemTime': 1000,  # Changed to numeric
+                'videoTime': '1000000',
+                'gps': {'latitude': 0.0, 'longitude': 0.0, 'accuracy': 1.0},
+                'imu': {
+                    'linear_acceleration': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+                    'angular_velocity': {'x': 0.0, 'y': 0.0, 'z': 0.0}
+                }
+            }], f)
+
+        # Create test segment
+        segment = CampaignSegment(
+            id="test-segment",
+            sequence_number=1,
+            recorded_at=datetime.now(),
+            video_path=str(video_path),
+            analytics_file_pattern="analytics*.json"
+        )
+        segment._extracted_path = video_path.parent
+
+        # Mock video metadata
+        mock_metadata = {
+            'duration': 10.0,
+            'size_bytes': 1024,
+            'format': 'mp4',
+            'video': {
+                'codec': 'h264',
+                'width': 1920,
+                'height': 1080,
+                'fps': 30.0,
+                'bitrate': 1000000
+            }
+        }
+
+        # Test frame processing
+        with patch('cv2.VideoCapture') as mock_cap, \
+                patch('campaign_reader.video.VideoMetadata.extract_metadata', return_value=mock_metadata):
+            mock_cap_instance = MagicMock()
+            mock_cap_instance.isOpened.return_value = True
+            mock_cap_instance.read.return_value = (True, np.zeros((100, 100, 3), dtype=np.uint8))
+            mock_cap_instance.get.return_value = 30.0
+            mock_cap.return_value = mock_cap_instance
+
+            # Test basic processing
+            df = segment.process_frames(sample_rate=1.0)
+            assert isinstance(df, pd.DataFrame)
+            assert not df.empty
+
+            # Test processing with output directory
+            output_dir = tmp_path / "output"
+            df = segment.process_frames(sample_rate=1.0, output_dir=output_dir)
+            assert not df['frame_path'].isna().any()
+            assert all(Path(path).parent.name == "test-segment" for path in df['frame_path'])
+
+            # Test processing without analytics
+            df = segment.process_frames(sample_rate=1.0, align_analytics=False)
+            assert 'latitude' not in df.columns
+
+        # Test processing with missing video
+        segment._extracted_path = None
+        df = segment.process_frames()
+        assert df is None
+
+
+def test_video_metadata_extraction(mock_video_file, mock_metadata):
+    """Test VideoMetadata extraction."""
+    with patch('subprocess.run') as mock_run, \
+            patch('pathlib.Path.stat') as mock_stat, \
+            patch('pathlib.Path.exists') as mock_exists:
+        # Mock file existence and size
+        mock_exists.return_value = True
+        mock_stat.return_value = MagicMock(st_size=1024)
+
+        # Setup mock subprocess response
+        mock_run.return_value = MagicMock(
+            stdout=json.dumps({
+                'format': {
+                    'duration': '10.0',
+                    'size': '1000',
+                    'format_name': 'mp4'
+                },
+                'streams': [{
+                    'codec_type': 'video',
+                    'codec_name': 'h264',
+                    'width': 1920,
+                    'height': 1080,
+                    'r_frame_rate': '30/1',
+                    'bit_rate': '1000000'
+                }]
+            })
+        )
+
+        metadata = VideoMetadata(mock_video_file)
+        result = metadata.extract_metadata()
+
+        assert result['duration'] == 10.0
+        assert result['video']['width'] == 1920
+        assert result['video']['height'] == 1080
+        assert result['video']['fps'] == 30.0
