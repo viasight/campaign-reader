@@ -5,12 +5,15 @@ import os
 import subprocess
 import sys
 import zipfile
+import logging
 
 import pytest
+
 
 # Add the src directory to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
+logging.basicConfig(level=logging.DEBUG)
 
 @pytest.fixture
 def sample_campaign_data():

@@ -44,43 +44,31 @@ def load_campaign(name):
         print(f"Duration: {metadata['duration']} seconds")
         print(f"Format: {metadata['format']}")
 
-        frame_data = segment.extract_frames(sample_rate=5.0)  # 5 frames per second
-
-        # Convert to DataFrame with aligned data
-        df = frame_data.to_dataframe()
+        df = segment.process_frames(
+            sample_rate=.5,  # 5 frames per second
+            output_dir=output_dir
+        )
         print(f"Extracted {len(df)} frames")
         print(df.columns)
         print(df)
         # Access frame data
         for idx, row in df.iterrows():
-            frame = row['frame']  # numpy array containing the image
+            # Instead of accessing frame directly from DataFrame
+            # we'll load it from the saved path
+            frame_path = Path(row['frame_path'])
 
             # Clean up coordinate values for filename
-            lat = f"{row['latitude_x']:.6f}" if pd.notna(row['latitude_x']) else "unknown"
-            lon = f"{row['longitude_x']:.6f}" if pd.notna(row['longitude_x']) else "unknown"
+            lat = f"{row['latitude']:.6f}" if pd.notna(row['latitude']) else "unknown"
+            lon = f"{row['longitude']:.6f}" if pd.notna(row['longitude']) else "unknown"
 
-            # Construct frame path
-            frame_path = output_dir / f"frame_{idx:04d}_{lat}_{lon}.jpg"
-            print(f"Saving frame {frame_path}")
+            # Rename frame to include coordinates
+            new_frame_path = output_dir / f"frame_{idx:04d}_{lat}_{lon}.jpg"
 
-            try:
-                # Save the frame directly without color space conversion first
-                success = cv2.imwrite(str(frame_path), frame)
-                if not success:
-                    print(f"Failed to write frame {frame_path}")
-                    # Try with color conversion if direct save fails
-                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    success = cv2.imwrite(str(frame_path), frame_bgr)
-                    if not success:
-                        print(f"Failed to write frame {frame_path} even after color conversion")
-            except Exception as e:
-                print(f"Error saving frame {frame_path}: {str(e)}")
+            if frame_path.exists():
+                frame_path.rename(new_frame_path)
+            else:
+                print(f"Frame file not found: {frame_path}")
 
-            # Print frame info for debugging
-            if idx == 0:  # Print info for first frame
-                print(f"Frame shape: {frame.shape}")
-                print(f"Frame dtype: {frame.dtype}")
-                print(f"Frame min/max values: {frame.min()}, {frame.max()}")
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':

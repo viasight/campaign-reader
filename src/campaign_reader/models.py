@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional, Dict, Union
+from typing import List, Optional, Dict, Union, Callable
 from pathlib import Path
+import pandas as pd
 
 from campaign_reader.analytics import AnalyticsData
-from campaign_reader.video import VideoMetadata, VideoFrameExtractor, FrameData, logger
+from campaign_reader.video import VideoMetadata, FrameProcessor, logger
 
 
 @dataclass
@@ -46,14 +47,21 @@ class CampaignSegment:
             return []
 
         analytics_path = self.get_analytics_path()
+        logger.info(f"analytics_path: {analytics_path}")
         if not analytics_path or not analytics_path.exists():
             return []
 
-        return sorted(analytics_path.glob('analytics*.json'))
+        paths = analytics_path.glob('analytics*.json')
+        if not analytics_path.exists():
+            return []
+        sorted_paths = sorted(paths)
+
+        return sorted_paths
 
     def get_analytics_data(self) -> Optional[AnalyticsData]:
         """Get analytics data handler for this segment."""
         files = self.get_analytics_files()
+        logger.info(f"files: {files}")
         return AnalyticsData(files) if files else None
 
     def get_video_metadata(self) -> Optional[Dict]:
@@ -64,39 +72,74 @@ class CampaignSegment:
 
         return VideoMetadata(video_path).extract_metadata()
 
-    def extract_frames(self,
+    def process_frames(self,
                        sample_rate: Optional[float] = None,
-                       align_analytics: bool = True) -> Optional[FrameData]:
+                       output_dir: Optional[Union[str, Path]] = None,
+                       frame_callback: Optional[Callable] = None,
+                       align_analytics: bool = True) -> Optional[pd.DataFrame]:
         """
-        Extract frames from the video and optionally align with analytics data.
+        Process frames from the video with optional saving and custom processing.
 
         Args:
             sample_rate: Optional frames per second to extract (default: video fps)
+            output_dir: Optional directory to save frames
+            frame_callback: Optional callback function(frame_info, frame_data) for custom processing
             align_analytics: Whether to align frames with analytics data
 
         Returns:
-            FrameData object containing aligned frames and analytics if successful,
+            DataFrame containing frame metadata and analytics if successful,
             None otherwise
         """
         video_path = self.get_video_path()
         if not video_path or not video_path.exists():
-            return None
-
-        extractor = VideoFrameExtractor(video_path)
-        analytics_data = self.get_analytics_data() if align_analytics else None
-
-        if align_analytics and not analytics_data:
+            logger.error(f"Video file not found for segment {self.id}")
             return None
 
         try:
-            frame_data = extractor.extract_aligned_frames(
-                analytics_data=analytics_data,
-                sample_rate=sample_rate
+            # Get analytics data if required
+            analytics_data = self.get_analytics_data() if align_analytics else None
+            if align_analytics and not analytics_data:
+                logger.error(f"Analytics data not found for segment {self.id}")
+                return None
+
+            # Create frame processor
+            processor = FrameProcessor(video_path, analytics_data)
+
+            # Process frames
+            if output_dir:
+                output_dir = Path(output_dir) / self.id
+
+            return processor.process_frames(
+                sample_rate=sample_rate,
+                output_dir=output_dir,
+                frame_callback=frame_callback
             )
-            return frame_data
+
         except Exception as e:
-            logger.error(f"Failed to extract frames from segment {self.id}: {str(e)}")
+            logger.error(f"Failed to process frames from segment {self.id}: {str(e)}")
             return None
+
+    def extract_frames(self,
+                       sample_rate: Optional[float] = None,
+                       align_analytics: bool = True,
+                       output_dir: Optional[Union[str, Path]] = None) -> Optional[pd.DataFrame]:
+        """
+        Legacy method for backward compatibility. Extracts frames and saves them if output_dir is provided.
+
+        Args:
+            sample_rate: Optional frames per second to extract (default: video fps)
+            align_analytics: Whether to align frames with analytics data
+            output_dir: Optional directory to save frames
+
+        Returns:
+            DataFrame containing frame metadata and analytics
+        """
+        return self.process_frames(
+            sample_rate=sample_rate,
+            align_analytics=align_analytics,
+            output_dir=output_dir
+        )
+
 
 @dataclass
 class Campaign:

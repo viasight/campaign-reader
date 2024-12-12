@@ -50,9 +50,14 @@ class AnalyticsData:
 
         # Convert timestamps
         if 'systemTime' in df.columns:
-            df['systemTime'] = pd.to_datetime(df['systemTime'].astype(float), unit='ms')
+            # Convert to relative time since start of recording
+            df['systemTime'] = df['systemTime'].astype(float)
+            start_time = df['systemTime'].min()
+            df['systemTime'] = (df['systemTime'] - start_time) / 1000.0  # Convert to seconds from start
+
         if 'videoTime' in df.columns:
-            df['videoTime'] = pd.to_timedelta(df['videoTime'].astype(float), unit='ns')
+            # Convert nanoseconds to seconds
+            df['videoTime'] = df['videoTime'].astype(float) / 1e9
 
         # Ensure float type for numeric columns
         float_columns = ['latitude', 'longitude', 'accuracy',
@@ -123,11 +128,10 @@ class AnalyticsData:
                 for col in missing_cols
             )
 
-        # Check timestamp ordering and gaps
+        # Check timestamp gaps (now using numeric seconds)
         system_time_diff = df['systemTime'].diff()
-
-        # Look for gaps >= 1 second (changed from > to >=)
-        large_gaps = system_time_diff[system_time_diff >= pd.Timedelta(seconds=1)]
+        # Look for gaps >= 1 second
+        large_gaps = system_time_diff[system_time_diff >= 1.0]
         if not large_gaps.empty:
             results['warnings'].append(f"Found {len(large_gaps)} time gaps >= 1 second in data collection")
 
