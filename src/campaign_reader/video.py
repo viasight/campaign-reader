@@ -2,6 +2,7 @@
 import json
 import logging
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
@@ -91,13 +92,19 @@ class FrameInfo:
 class FrameIterator:
     """Iterator class that yields frames one at a time without storing them in memory."""
 
-    def __init__(self, video_path: Path, timestamps: np.ndarray, analytics_lookup: Optional[Dict] = None):
+    def __init__(self, video_path: Path, timestamps: np.ndarray, analytics_lookup: Optional[Dict] = None, 
+                 use_sequential: bool = False):
         self.video_path = video_path
         self.timestamps = timestamps
         self.analytics_lookup = analytics_lookup or {}
+        self.use_sequential = use_sequential
         self._cap: Optional[cv2.VideoCapture] = None
         self._current_idx = 0
         self._fps: Optional[float] = None
+        
+        # Sequential processing state
+        self._current_frame_number = 0
+        self._next_target_idx = 0
 
     def __enter__(self):
         self.open()
@@ -136,6 +143,13 @@ class FrameIterator:
         if self._cap is None:
             raise ValueError("Video file not opened")
 
+        if self.use_sequential:
+            return self._next_sequential()
+        else:
+            return self._next_seeking()
+    
+    def _next_seeking(self) -> tuple[FrameInfo, np.ndarray]:
+        """Get next frame using seek-based approach (original method)."""
         timestamp = self.timestamps[self._current_idx]
         frame_number = int(timestamp * self._fps)
 
@@ -146,7 +160,40 @@ class FrameIterator:
         if not ret:
             raise StopIteration
 
-        # Create frame info
+        frame_info = self._create_frame_info(timestamp, frame_number)
+        self._current_idx += 1
+        return frame_info, frame
+    
+    def _next_sequential(self) -> tuple[FrameInfo, np.ndarray]:
+        """Get next frame using sequential reading approach."""
+        # Find next target frame number
+        if self._next_target_idx >= len(self.timestamps):
+            raise StopIteration
+            
+        target_timestamp = self.timestamps[self._next_target_idx]
+        target_frame_number = int(target_timestamp * self._fps)
+        
+        # Read frames sequentially until we reach the target
+        while self._current_frame_number <= target_frame_number:
+            ret, frame = self._cap.read()
+            if not ret:
+                raise StopIteration
+                
+            # If this is our target frame, return it
+            if self._current_frame_number == target_frame_number:
+                frame_info = self._create_frame_info(target_timestamp, target_frame_number)
+                self._current_idx = self._next_target_idx
+                self._next_target_idx += 1
+                self._current_frame_number += 1
+                return frame_info, frame
+                
+            self._current_frame_number += 1
+            # Frame is automatically discarded here - no memory accumulation
+            
+        raise StopIteration
+    
+    def _create_frame_info(self, timestamp: float, frame_number: int) -> FrameInfo:
+        """Create FrameInfo with analytics lookup."""
         frame_info = FrameInfo(
             timestamp=timestamp,
             frame_number=frame_number
@@ -168,8 +215,7 @@ class FrameIterator:
                     system_time = int(system_time)
                 frame_info.system_time = system_time
 
-        self._current_idx += 1
-        return frame_info, frame
+        return frame_info
 
 
 class FrameProcessor:
@@ -180,6 +226,21 @@ class FrameProcessor:
         self.metadata = VideoMetadata(video_path)
         self.analytics_data = analytics_data
 
+    def _should_use_sequential(self, sample_fps: float, video_fps: float, duration: float) -> bool:
+        """Decide whether to use sequential or seeking approach based on efficiency."""
+        # Calculate how many frames we'd need to read vs how many we want
+        total_frames = int(duration * video_fps)
+        target_frames = int(duration * sample_fps)
+        
+        # Use sequential if we're sampling more than 10% of frames
+        # This threshold balances seek overhead vs extra frame reads
+        sampling_ratio = target_frames / total_frames if total_frames > 0 else 0
+        
+        # Also consider absolute frame gaps - if gap is small, sequential is better
+        avg_frame_gap = total_frames / target_frames if target_frames > 0 else float('inf')
+        
+        return sampling_ratio > 0.1 or avg_frame_gap < 10
+    
     def process_frames(self,
                        sample_rate: Optional[float] = None,
                        output_dir: Optional[Path] = None,
@@ -202,6 +263,13 @@ class FrameProcessor:
 
         # Generate timestamps
         timestamps = np.arange(0, duration, 1 / fps)
+        
+        # Decide between sequential vs seeking approach
+        use_sequential = self._should_use_sequential(fps, metadata['video']['fps'], duration)
+        approach = "sequential" if use_sequential else "seeking"
+        sampling_ratio = len(timestamps) / (duration * metadata['video']['fps']) * 100
+        logger.info(f"Using {approach} extraction for {len(timestamps)} frames "
+                   f"({sampling_ratio:.1f}% of video, sample_rate={fps:.2f} fps)")
 
         # Create analytics lookup if available:
         analytics_lookup = {}
@@ -231,13 +299,18 @@ class FrameProcessor:
 
         # Process frames
         frame_records = []
+        total_frames = len(timestamps)
 
         if output_dir:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-        with FrameIterator(self.video_path, timestamps, analytics_lookup) as frame_iter:
-            for frame_info, frame in frame_iter:
+        print(f"Extracting {total_frames} frames using {approach} approach...")
+        
+        with FrameIterator(self.video_path, timestamps, analytics_lookup, use_sequential) as frame_iter:
+            for i, (frame_info, frame) in enumerate(frame_iter):
+                # Update progress bar
+                self._update_progress(i + 1, total_frames)
                 # Save frame if output directory specified
                 frame_path = None
                 if output_dir:
@@ -260,6 +333,9 @@ class FrameProcessor:
                     record.update(frame_info.analytics)
 
                 frame_records.append(record)
+        
+        # Clear progress bar and print completion
+        print("\nFrame extraction completed!")
 
         # Create DataFrame with frame metadata
         df = pd.DataFrame(frame_records)
@@ -270,3 +346,13 @@ class FrameProcessor:
             df['system_time'] = pd.to_datetime(pd.to_numeric(df['system_time'], errors='coerce'), unit='ms')
 
         return df
+    
+    def _update_progress(self, current: int, total: int, bar_length: int = 40):
+        """Display ASCII progress bar."""
+        percent = current / total
+        filled_length = int(bar_length * percent)
+        bar = '█' * filled_length + '░' * (bar_length - filled_length)
+        
+        # Print progress bar with carriage return to overwrite
+        sys.stdout.write(f'\r[{bar}] {current}/{total} ({percent:.1%})')
+        sys.stdout.flush()
