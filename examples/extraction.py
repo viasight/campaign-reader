@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import cv2
@@ -7,12 +8,12 @@ from campaign_reader import CampaignReader
 from campaign_reader.analytics import AnalyticsAggregator
 
 
-def load_campaign(name):
+def load_campaign(campaign_path, sample_rate, output_dir):
 
-    output_dir = Path("./output")
+    output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
 
-    with CampaignReader(name, "./campaign") as reader:
+    with CampaignReader(campaign_path, "./campaign") as reader:
         campaign = reader.get_campaign_metadata()
         print(f"Campaign Name: {campaign.name}")
         print(f"Campaign Description: {campaign.description}")
@@ -45,7 +46,7 @@ def load_campaign(name):
         print(f"Format: {metadata['format']}")
 
         df = segment.process_frames(
-            sample_rate=.5,  # 5 frames per second
+            sample_rate=sample_rate,
             output_dir=output_dir
         )
         print(f"Extracted {len(df)} frames")
@@ -70,8 +71,40 @@ def load_campaign(name):
                 print(f"Frame file not found: {frame_path}")
 
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    load_campaign('/Users/zikomofields/Downloads/Lake Lotawana HOA Roads_1733949339302.zip')
+def main():
+    parser = argparse.ArgumentParser(
+        description='Extract frames from campaign video with analytics data',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    parser.add_argument(
+        'campaign_path',
+        help='Path to the campaign zip file'
+    )
+    
+    parser.add_argument(
+        '--sample-rate', '-s',
+        type=float,
+        default=30.0,
+        help='Frame extraction sample rate (frames per second)'
+    )
+    
+    parser.add_argument(
+        '--output-dir', '-o',
+        type=str,
+        default='./output',
+        help='Output directory for extracted frames'
+    )
+    
+    args = parser.parse_args()
+    
+    print(f"Processing campaign: {args.campaign_path}")
+    print(f"Sample rate: {args.sample_rate} fps")
+    print(f"Output directory: {args.output_dir}")
+    print("-" * 50)
+    
+    load_campaign(args.campaign_path, args.sample_rate, args.output_dir)
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+
+if __name__ == '__main__':
+    main()

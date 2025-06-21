@@ -173,6 +173,19 @@ class FrameIterator:
         target_timestamp = self.timestamps[self._next_target_idx]
         target_frame_number = int(target_timestamp * self._fps)
         
+        # If we've already read past this frame (happens with duplicate frame numbers),
+        # seek back to the target frame
+        if self._current_frame_number > target_frame_number:
+            self._cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame_number)
+            ret, frame = self._cap.read()
+            if not ret:
+                raise StopIteration
+            frame_info = self._create_frame_info(target_timestamp, target_frame_number)
+            self._current_idx = self._next_target_idx
+            self._next_target_idx += 1
+            self._current_frame_number = target_frame_number + 1
+            return frame_info, frame
+        
         # Read frames sequentially until we reach the target
         while self._current_frame_number <= target_frame_number:
             ret, frame = self._cap.read()
@@ -190,6 +203,7 @@ class FrameIterator:
             self._current_frame_number += 1
             # Frame is automatically discarded here - no memory accumulation
             
+        # Should never reach here if logic is correct
         raise StopIteration
     
     def _create_frame_info(self, timestamp: float, frame_number: int) -> FrameInfo:
