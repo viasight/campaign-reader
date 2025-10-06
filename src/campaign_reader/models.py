@@ -149,6 +149,7 @@ class Campaign:
     created_at: datetime
     description: str
     segments: List[CampaignSegment]
+    product: str
 
     @classmethod
     def from_dict(cls, data: dict) -> 'Campaign':
@@ -158,7 +159,8 @@ class Campaign:
             name=data['name'],
             created_at=datetime.fromtimestamp(data['createdAt'] / 1000.0),
             description=data['description'],
-            segments=[CampaignSegment.from_dict(seg) for seg in data['segments']]
+            segments=[CampaignSegment.from_dict(seg) for seg in data['segments']],
+            product=data.get('product', '')
         )
 
     def get_segment(self, segment_id: str) -> Optional[CampaignSegment]:
