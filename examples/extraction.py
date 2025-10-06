@@ -17,6 +17,7 @@ def load_campaign(campaign_path, sample_rate, output_dir):
         campaign = reader.get_campaign_metadata()
         print(f"Campaign Name: {campaign.name}")
         print(f"Campaign Description: {campaign.description}")
+        print(f"Campaign Product: {campaign.product}")
         print(f"Campaign Created At: {campaign.created_at}")
 
         segment = reader.get_segments()[0]

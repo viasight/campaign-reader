@@ -203,6 +203,7 @@ campaign.zip
   "name": "Test Campaign",
   "createdAt": 1733434689359,
   "description": "Campaign description",
+  "product": "ViaSight Pro",
   "segments": [
     {
       "id": "7e0226fd-2903-4d4b-b399-f103e9063e06",

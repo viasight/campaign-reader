@@ -17,6 +17,7 @@ def sample_campaign_data():
         "name": "Test drive around Lees Summit",
         "createdAt": 1733434689359,
         "description": "Driving around Lees Summit MO",
+        "product": "ViaSight Pro",
         "segments": [
             {
                 "id": "7e0226fd-2903-4d4b-b399-f103e9063e06",
