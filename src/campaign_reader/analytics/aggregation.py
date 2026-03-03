@@ -31,7 +31,7 @@ class AnalyticsAggregator:
         """Ensures datetime column exists in the DataFrame."""
         if 'datetime' not in self.df.columns:
             if not isinstance(self.df['systemTime'].iloc[0], pd.Timestamp):
-                self.df['datetime'] = pd.to_datetime(self.df['systemTime'].astype(float), unit='ms')
+                self.df['datetime'] = pd.to_datetime(self.df['systemTime'].astype(float), unit='s')
             else:
                 self.df['datetime'] = self.df['systemTime']
 
@@ -77,15 +77,16 @@ class AnalyticsAggregator:
 
         self._ensure_datetime()
 
-        # Calculate distances between consecutive points
-        coords = list(zip(self.df['latitude'], self.df['longitude']))
+        # Calculate distances between consecutive points, dropping NaN coordinates
+        valid = self.df.dropna(subset=['latitude', 'longitude'])
+        coords = list(zip(valid['latitude'], valid['longitude']))
         distances = [
             geodesic(coords[i], coords[i + 1]).meters
             for i in range(len(coords) - 1)
         ]
 
         # Calculate speeds using time differences
-        time_diffs = np.diff(self.df['datetime'].astype(np.int64)) / 1e9  # Convert to seconds
+        time_diffs = np.diff(valid['datetime'].astype(np.int64)) / 1e9  # Convert to seconds
         speeds = [d / t for d, t in zip(distances, time_diffs) if t > 0]
 
         return {

@@ -9,16 +9,17 @@ from campaign_reader.analytics.aggregation import AnalyticsAggregator
 
 @pytest.fixture
 def sample_analytics_df():
-    """Create a sample DataFrame for testing."""
-    base_time = datetime(2024, 1, 1, 12, 0, 0)
+    """Create a sample DataFrame matching the format produced by AnalyticsData.to_dataframe().
+
+    systemTime values are relative seconds from start of recording.
+    """
     data = []
 
     for i in range(10):
-        timestamp = base_time + timedelta(seconds=i)
         data.append({
             'index': i,
-            'systemTime': str(int(timestamp.timestamp() * 1000)),
-            'videoTime': str(i),
+            'systemTime': float(i),  # relative seconds from start
+            'videoTime': float(i),
             'latitude': 44.9553195 + (i * 0.0001),
             'longitude': -93.3773398 + (i * 0.0001),
             'accuracy': 14.813 + (i * 0.1),
