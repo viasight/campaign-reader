@@ -85,7 +85,7 @@ def test_motion_stats(sample_analytics_df):
 def test_aggregate_by_interval(sample_analytics_df):
     """Test time-based aggregation."""
     aggregator = AnalyticsAggregator(sample_analytics_df)
-    aggregated = aggregator.aggregate_by_interval('5S')
+    aggregated = aggregator.aggregate_by_interval('5s')
 
     assert isinstance(aggregated, pd.DataFrame)
     assert len(aggregated) == 2  # Should have 2 5-second intervals

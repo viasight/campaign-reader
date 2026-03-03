@@ -36,7 +36,7 @@ def load_campaign(campaign_path, sample_rate, output_dir):
         print(f"Duration: {summary['temporal']['total_duration']:.2f} seconds")
 
         # Aggregate data by time interval
-        resampled = aggregator.aggregate_by_interval('5S')  # 5-second intervals
+        resampled = aggregator.aggregate_by_interval('5s')  # 5-second intervals
         print("\nIMU Statistics by 5-second intervals:")
         print(resampled['linear_acceleration_z'].describe())
 
