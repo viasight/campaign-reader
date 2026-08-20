@@ -101,3 +101,27 @@ def test_get_summary(sample_analytics_df):
     assert 'temporal' in summary
     assert 'spatial' in summary
     assert 'motion' in summary
+
+def test_spatial_stats_all_nan_accuracy_yields_none_not_nan():
+    """VIA-500 review: NaN accuracy must not leak an invalid `NaN` token
+    into delivered campaign_metadata.json — emit None (JSON null) instead."""
+    import json
+
+    import numpy as np
+    import pandas as pd
+
+    from campaign_reader.analytics.aggregation import AnalyticsAggregator
+
+    df = pd.DataFrame({
+        'index': [0, 1],
+        'systemTime': [1e9, 2e9],
+        'videoTime': [0.0, 1.0],
+        'latitude': [44.97, 44.971],
+        'longitude': [-93.26, -93.261],
+        'accuracy': [np.nan, np.nan],
+    })
+    stats = AnalyticsAggregator(df).get_spatial_stats()
+    assert stats['min_accuracy'] is None
+    assert stats['max_accuracy'] is None
+    # the delivered-metadata contract: strict JSON, no bare NaN tokens
+    json.dumps(stats, allow_nan=False)
