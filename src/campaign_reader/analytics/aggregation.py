@@ -89,12 +89,19 @@ class AnalyticsAggregator:
         time_diffs = np.diff(valid['datetime'].astype(np.int64)) / 1e9  # Convert to seconds
         speeds = [d / t for d, t in zip(distances, time_diffs) if t > 0]
 
+        # Accuracy min/max can be NaN when every value was coerced away
+        # (core.py errors='coerce'); a bare NaN in these stats becomes an
+        # invalid `NaN` token in delivered campaign_metadata.json, which
+        # non-Python JSON parsers reject. Use None instead, and read accuracy
+        # from the same NaN-coord-filtered frame as distance/speed.
+        min_accuracy = valid['accuracy'].min()
+        max_accuracy = valid['accuracy'].max()
         return {
             'total_distance': sum(distances),
             'avg_speed': np.mean(speeds) if speeds else 0,
             'max_speed': max(speeds) if speeds else 0,
-            'min_accuracy': self.df['accuracy'].min(),
-            'max_accuracy': self.df['accuracy'].max()
+            'min_accuracy': None if pd.isna(min_accuracy) else float(min_accuracy),
+            'max_accuracy': None if pd.isna(max_accuracy) else float(max_accuracy)
         }
 
     def get_motion_stats(self) -> Dict[str, Dict[str, float]]:
