@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='campaign-reader',
-    version='0.3.0',
+    version='0.3.1',
     packages=find_packages(where='src'),
     package_dir={'': 'src'},
     install_requires=[
@@ -10,6 +10,10 @@ setup(
         'numpy>=1.21.0',  # Updated to match our array handling
         'opencv-python>=4.5.0',
         'opencv-python-headless>=4.5.0;platform_system!="Windows"',
+        # geodesic distance in analytics/aggregation.py get_spatial_stats();
+        # was only in requirements.txt, so package installs (lawson) ran
+        # without it and segment stats were silently skipped (VIA-500).
+        'geopy>=2.4.1',
     ],
     extras_require={
         'dev': [
